@@ -4,6 +4,8 @@ import 'leaflet/dist/leaflet.css';
 import ZWSLayer from '../Layer/ZWSLayer';
 import { ZWSService } from '../services/ZWSService';
 import { useWfsLayer } from '../hooks/useWfsLayer';
+import { DEFAULTS, WINDOW_POPUP } from './defaults';
+import { escapeHtml } from '../utils/escapeHtml';
 
 // fix Leaflet default icons in React environments
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -15,15 +17,6 @@ L.Icon.Default.mergeOptions({
   shadowUrl:
     'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
 });
-
-function escapeHtml(s: string) {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
 
 interface MapProps {
   center?: [number, number];
@@ -37,28 +30,13 @@ interface MapProps {
 
   // WMS (tile)
   wmsUrl?: string;
-  wmsLayerName?: string; // layers parameter for WMS server
+  wmsLayerName?: string;
   wmsOptions?: L.WMSOptions;
 
   // WFS (XML/GML)
-  wfsUrl?: string; // base WFS URL
-  wfsTypeName?: string; // typeName / layer name used in GetFeature (e.g. openlayers:teploset)
+  wfsUrl?: string;
+  wfsTypeName?: string;
 }
-
-const DEFAULTS = {
-  center: [42.3231, 69.5851] as [number, number],
-  zoom: 13,
-  height: '100vh',
-  zwsLayerName: 'example:demo',
-  zwsEndpoint: 'http://zs.zulugis.ru:6473/zws',
-  zwsAuth: { user: 'mo', pass: 'mo' },
-};
-
-const WINDOW_POPUP = {
-  maxHeight: 250,
-  maxWidth: 400,
-  autoPan: true,
-};
 
 const Map: React.FC<MapProps> = ({
   center = DEFAULTS.center,
