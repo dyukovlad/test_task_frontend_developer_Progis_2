@@ -22,7 +22,3 @@
 
 После запуска открой:
 👉 http://localhost:5173
-
-# Сразу посмотреть
-
-https://test-task-frontend-developer-progis.vercel.app/
