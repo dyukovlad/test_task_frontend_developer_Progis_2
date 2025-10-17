@@ -86,5 +86,3 @@ export class ZWSLayer extends L.GridLayer {
     return tile;
   }
 }
-
-export default ZWSLayer;

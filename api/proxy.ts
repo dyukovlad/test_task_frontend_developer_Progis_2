@@ -8,33 +8,48 @@ function isAllowedHost(hostname: string) {
   return ALLOWED_HOSTS.includes(hostname);
 }
 
+function buildTargetUrl(originalUrl: string, query: Record<string, any>) {
+  const base = new URL(originalUrl);
+  Object.entries(query).forEach(([k, v]) => {
+    if (k === 'url') return;
+    if (Array.isArray(v)) {
+      v.forEach((val) => base.searchParams.append(k, String(val)));
+    } else {
+      base.searchParams.append(k, String(v));
+    }
+  });
+  return base.toString();
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
-    const target =
+    // Support both ?url=encoded and x-target-url header
+    const rawUrl =
       (req.query.url as string) || (req.headers['x-target-url'] as string);
-    if (!target) {
-      res
+    if (!rawUrl)
+      return res
         .status(400)
         .send('Missing `url` query parameter or `x-target-url` header');
-      return;
-    }
+
+    // decode in case double-encoded by client
+    const decoded = decodeURIComponent(rawUrl);
 
     let targetUrl: URL;
     try {
-      targetUrl = new URL(target);
+      targetUrl = new URL(decoded);
     } catch (err) {
-      res.status(400).send('Invalid target URL');
-      return;
+      return res.status(400).send('Invalid target URL');
     }
 
     if (!isAllowedHost(targetUrl.hostname)) {
-      res.status(403).send('Host not allowed');
-      return;
+      return res.status(403).send(`Host not allowed: ${targetUrl.hostname}`);
     }
 
-    // Build fetch options
-    const headers: Record<string, string> = {};
-    // copy user-supplied headers except host/connection
+    // Rebuild target url by appending remaining query params from the proxy request
+    const finalTarget = buildTargetUrl(decoded, req.query);
+
+    // Build headers for upstream request
+    const upstreamHeaders: Record<string, string> = {};
     for (const [k, v] of Object.entries(req.headers)) {
       if (!v) continue;
       const lk = k.toLowerCase();
@@ -44,33 +59,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         )
       )
         continue;
-      // @ts-ignore
-      headers[k] = Array.isArray(v) ? v.join(',') : String(v);
+      upstreamHeaders[k] = Array.isArray(v) ? v.join(',') : String(v);
     }
 
-    // If you want server-side Basic auth for target: set PROXY_BASIC_AUTH="user:pass" in Vercel env
+    // Server-side basic auth option (hidden in env)
     if (process.env.PROXY_BASIC_AUTH) {
-      const b64 = Buffer.from(process.env.PROXY_BASIC_AUTH).toString('base64');
-      headers['Authorization'] = `Basic ${b64}`;
+      upstreamHeaders['Authorization'] = `Basic ${Buffer.from(
+        process.env.PROXY_BASIC_AUTH
+      ).toString('base64')}`;
     }
-
-    // If the client forwarded an Authorization header and you trust it, keep it:
+    // If client provided Authorization and you want to forward it:
     if (req.headers.authorization) {
-      headers['Authorization'] = req.headers.authorization as string;
+      upstreamHeaders['Authorization'] = String(req.headers.authorization);
     }
 
+    // Configure fetch options
     const fetchOptions: RequestInit = {
-      method: req.method,
-      headers,
-      // for GET/HEAD body must be undefined
-      body: ['GET', 'HEAD'].includes(req.method || '') ? undefined : req.body,
+      method: req.method as string,
+      headers: upstreamHeaders,
       redirect: 'follow',
     };
 
-    const upstream = await fetch(target, fetchOptions);
+    // handle body for POST/PUT
+    if (!['GET', 'HEAD'].includes((req.method || '').toUpperCase())) {
+      // Vercel passes body as raw already; ensure Content-Type preserved
+      fetchOptions.body = req.body;
+    }
 
-    // copy response status and headers (filter hop-by-hop)
+    const upstream = await fetch(finalTarget, fetchOptions);
+
+    // copy status
     res.status(upstream.status);
+
+    // copy headers (filter hop-by-hop)
     upstream.headers.forEach((value, name) => {
       const lower = name.toLowerCase();
       if (
@@ -87,18 +108,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       res.setHeader(name, value);
     });
 
-    // ensure CORS headers for safety (client and debug)
-    // If you want to limit origin, set PROXY_ALLOW_ORIGIN env (or use Vercel's domains)
+    // set safe CORS for client (adjust in prod)
     const allowOrigin = process.env.PROXY_ALLOW_ORIGIN || '*';
     res.setHeader('Access-Control-Allow-Origin', allowOrigin);
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
 
-    // stream response body
-    const buffer = Buffer.from(await upstream.arrayBuffer());
+    // stream body back: handle binary and text
+    const arrayBuffer = await upstream.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
     res.send(buffer);
   } catch (err: any) {
     console.error('proxy error', err);
+    if (err?.name === 'AbortError')
+      return res.status(499).send('Client closed request');
     res.status(500).send(err?.message || 'proxy error');
   }
 }

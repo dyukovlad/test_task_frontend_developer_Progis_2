@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useCallback } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import ZWSLayer from '../Layer/ZWSLayer';
+import { ZWSLayer } from '../Layer/ZWSLayer';
 import { ZWSService } from '../services/ZWSService';
 import { useWfsLayer } from '../hooks/useWfsLayer';
 import { DEFAULTS, WINDOW_POPUP } from './defaults';
