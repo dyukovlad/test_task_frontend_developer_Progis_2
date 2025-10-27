@@ -6,6 +6,7 @@ import { ZWSService } from '../services/ZWSService';
 import { useWfsLayer } from '../hooks/useWfsLayer';
 import { DEFAULTS, WINDOW_POPUP } from './defaults';
 import { escapeHtml } from '../utils/escapeHtml';
+import { parseCoordinates, findCoordinatesField, coordinatesToLeaflet, isValidPolygon } from '../utils/geometryUtils';
 
 // fix Leaflet default icons in React environments
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -36,6 +37,15 @@ interface MapProps {
   // WFS (XML/GML)
   wfsUrl?: string;
   wfsTypeName?: string;
+
+  // Highlight area options
+  highlightOptions?: {
+    color?: string;
+    weight?: number;
+    opacity?: number;
+    fillColor?: string;
+    fillOpacity?: number;
+  };
 }
 
 const Map: React.FC<MapProps> = ({
@@ -50,6 +60,13 @@ const Map: React.FC<MapProps> = ({
   wmsOptions,
   wfsUrl,
   wfsTypeName,
+  highlightOptions = {
+    color: '#ff0000',
+    weight: 3,
+    opacity: 0.8,
+    fillColor: '#ff0000',
+    fillOpacity: 0.2,
+  },
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -61,6 +78,7 @@ const Map: React.FC<MapProps> = ({
   const layerControlRef = useRef<L.Control.Layers | null>(null);
 
   const markersGroupRef = useRef<L.LayerGroup | null>(null);
+  const highlightGroupRef = useRef<L.LayerGroup | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   // zws service to fetch attributes on click
@@ -78,6 +96,10 @@ const Map: React.FC<MapProps> = ({
     markersGroupRef.current?.clearLayers();
   }, []);
 
+  const clearHighlight = useCallback(() => {
+    highlightGroupRef.current?.clearLayers();
+  }, []);
+
   const addMarkerWithPopup = useCallback(
     (latlng: L.LatLngExpression, html: string) => {
       if (!markersGroupRef.current || !mapRef.current) return;
@@ -88,6 +110,44 @@ const Map: React.FC<MapProps> = ({
     },
     []
   );
+
+  // Функция для отрисовки выделенной области по координатам
+  const drawHighlightArea = useCallback((coordinates: Array<{lng: number, lat: number}>) => {
+    if (!highlightGroupRef.current || !mapRef.current) return;
+    
+    // Очищаем предыдущие выделения
+    clearHighlight();
+    
+    // Проверяем валидность полигона
+    if (!isValidPolygon(coordinates)) {
+      console.warn('Некорректные координаты для полигона');
+      return;
+    }
+    
+    // Преобразуем координаты в формат Leaflet [lat, lng]
+    const latLngs = coordinatesToLeaflet(coordinates);
+    
+    // Создаем полигон с настраиваемыми стилями
+    const polygon = L.polygon(latLngs, highlightOptions);
+    
+    // Добавляем полигон в группу выделения
+    highlightGroupRef.current.addLayer(polygon);
+    
+    // Подгоняем карту к выделенной области
+    const bounds = polygon.getBounds();
+    mapRef.current.fitBounds(bounds, { padding: [20, 20] });
+  }, [clearHighlight, highlightOptions]);
+
+  // Функция для извлечения координат из ответа сервера
+  const extractCoordinatesFromFields = useCallback((fields: Array<{userName: string, value: string}>) => {
+    // Ищем поле с координатами
+    const coordValue = findCoordinatesField(fields);
+    
+    if (!coordValue) return null;
+    
+    // Парсим координаты
+    return parseCoordinates(coordValue);
+  }, []);
 
   // load WFS around a point (small bbox)
   const loadWfsAtPoint = useCallback(
@@ -124,8 +184,9 @@ const Map: React.FC<MapProps> = ({
       const z = map.getZoom();
       const scale = (2 * Math.PI * 6378137.0) / (256 * Math.pow(2, z ?? zoom));
 
-      // clear previous marker (variant 1 behavior)
+      // clear previous marker and highlight (variant 1 behavior)
       clearMarkers();
+      clearHighlight();
 
       try {
         const fields = await zwsService.selectByXY(
@@ -175,6 +236,12 @@ const Map: React.FC<MapProps> = ({
                 .join('<br/>')}</div>`;
 
         addMarkerWithPopup(e.latlng, popupHtml);
+
+        // Пытаемся извлечь координаты для отрисовки выделенной области
+        const coordinates = extractCoordinatesFromFields(fields);
+        if (coordinates && coordinates.length > 0) {
+          drawHighlightArea(coordinates);
+        }
       } catch (err) {
         if ((err as any)?.name === 'AbortError') {
           console.info('ZWS aborted');
@@ -215,8 +282,11 @@ const Map: React.FC<MapProps> = ({
       zwsLayerName,
       zoom,
       clearMarkers,
+      clearHighlight,
       addMarkerWithPopup,
       loadWfsAtPoint,
+      extractCoordinatesFromFields,
+      drawHighlightArea,
     ]
   );
 
@@ -235,6 +305,9 @@ const Map: React.FC<MapProps> = ({
 
     // markers group for click-selected markers
     markersGroupRef.current = L.layerGroup().addTo(map);
+    
+    // highlight group for selected areas
+    highlightGroupRef.current = L.layerGroup().addTo(map);
 
     // create overlays map for LayerControl
     const overlays: Record<string, L.Layer> = {};
@@ -374,6 +447,14 @@ const Map: React.FC<MapProps> = ({
           markersGroupRef.current.clearLayers();
         } catch (e) {}
         markersGroupRef.current = null;
+      }
+
+      // remove highlight group
+      if (highlightGroupRef.current) {
+        try {
+          highlightGroupRef.current.clearLayers();
+        } catch (e) {}
+        highlightGroupRef.current = null;
       }
 
       map.remove();

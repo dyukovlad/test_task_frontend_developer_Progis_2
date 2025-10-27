@@ -17,6 +17,13 @@ function App(): JSX.Element {
         wmsOptions={{ opacity: 0.7 }}
         wfsUrl={wmsBase + 'ws'}
         wfsTypeName="world:world"
+        highlightOptions={{
+          color: '#0066cc',
+          weight: 2,
+          opacity: 0.9,
+          fillColor: '#0066cc',
+          fillOpacity: 0.3,
+        }}
       />
     </ThemeProvider>
   );
