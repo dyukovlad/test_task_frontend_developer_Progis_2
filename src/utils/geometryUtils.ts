@@ -49,6 +49,19 @@ export function parseCoordinates(value: string): Coordinate[] | null {
         return pairs;
       }
     }
+
+    // Если это строка с координатами, разделёнными пробелами: "lng lat lng lat ..."
+    // Пример: "58.5655 45.5699 58.5605 45.5686 ..."
+    if (/^-?\d+(?:\.\d+)?(?:\s+-?\d+(?:\.\d+)?)+$/.test(value.trim())) {
+      const parts = value.trim().split(/\s+/).map((n) => parseFloat(n));
+      if (parts.length >= 6 && parts.length % 2 === 0) {
+        const pairs: Coordinate[] = [];
+        for (let i = 0; i < parts.length; i += 2) {
+          pairs.push({ lng: parts[i], lat: parts[i + 1] });
+        }
+        return pairs;
+      }
+    }
     
     // Если это WKT формат (POLYGON((lng lat, lng lat, ...)))
     if (value.toUpperCase().includes('POLYGON')) {

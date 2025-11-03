@@ -113,13 +113,19 @@ const Map: React.FC<MapProps> = ({
 
   // HTML builder for properties popup
   const buildPropsPopupHtml = useCallback((props: Record<string, unknown>): string => {
-    const entries = Object.entries(props);
-    if (!entries.length) return '<div><em>Нет атрибутов</em></div>';
-    return `<div>${entries
-      .map(
-        ([k, v]) =>
-          `<strong>${escapeHtml(String(k))}:</strong> ${escapeHtml(String(v))}`
-      )
+    const filtered = Object.entries(props).filter(([key, value]) => {
+      if (key === 'ZULU_GEOM') return false;
+      if (value === null || value === undefined) return true;
+      const t = typeof value;
+      if (t === 'string' || t === 'number' || t === 'boolean') return true;
+      // скрываем массивы/объекты (например массив координат)
+      return false;
+    });
+
+    if (!filtered.length) return '<div><em>Нет атрибутов</em></div>';
+
+    return `<div>${filtered
+      .map(([k, v]) => `<strong>${escapeHtml(String(k))}:</strong> ${escapeHtml(String(v as any))}`)
       .join('<br/>')}</div>`;
   }, []);
 
@@ -220,10 +226,19 @@ const Map: React.FC<MapProps> = ({
 
         if (fields === null) {
           // try WFS fallback (small bbox)
-        const wfsGeo = await loadWfsAtPoint(e.latlng.lat, e.latlng.lng);
+          const wfsGeo = await loadWfsAtPoint(e.latlng.lat, e.latlng.lng);
           if (wfsGeo && wfsGeo.features && wfsGeo.features.length > 0) {
-            const props = wfsGeo.features[0].properties ?? {};
+            const feature = wfsGeo.features[0];
+            const props = feature.properties ?? {};
             showPropsPopupAt(e.latlng, props);
+            // Если пришла геометрия (GeoJSON), отрисуем её
+            if (feature.geometry && feature.geometry.type === 'Polygon') {
+              const rings = feature.geometry.coordinates?.[0] as number[][] | undefined;
+              if (Array.isArray(rings) && rings.length) {
+                const coords = rings.map((p) => ({ lng: p[0], lat: p[1] }));
+                drawHighlightArea(coords);
+              }
+            }
             return;
           }
 
@@ -265,8 +280,16 @@ const Map: React.FC<MapProps> = ({
         try {
           const wfsGeo = await loadWfsAtPoint(e.latlng.lat, e.latlng.lng);
           if (wfsGeo && wfsGeo.features && wfsGeo.features.length > 0) {
-            const props = wfsGeo.features[0].properties ?? {};
+            const feature = wfsGeo.features[0];
+            const props = feature.properties ?? {};
             showPropsPopupAt(e.latlng, props);
+            if (feature.geometry && feature.geometry.type === 'Polygon') {
+              const rings = feature.geometry.coordinates?.[0] as number[][] | undefined;
+              if (Array.isArray(rings) && rings.length) {
+                const coords = rings.map((p) => ({ lng: p[0], lat: p[1] }));
+                drawHighlightArea(coords);
+              }
+            }
             return;
           }
         } catch (wfserr) {
