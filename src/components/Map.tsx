@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useCallback } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { ZWSLayer } from '../Layer/ZWSLayer';
-import { ZWSService } from '../services/ZWSService';
+import { ZWSService, ZWSField } from '../services/ZWSService';
 import { useWfsLayer } from '../hooks/useWfsLayer';
 import { DEFAULTS, WINDOW_POPUP } from './defaults';
 import { escapeHtml } from '../utils/escapeHtml';
@@ -111,6 +111,27 @@ const Map: React.FC<MapProps> = ({
     []
   );
 
+  // HTML builder for properties popup
+  const buildPropsPopupHtml = useCallback((props: Record<string, unknown>): string => {
+    const entries = Object.entries(props);
+    if (!entries.length) return '<div><em>Нет атрибутов</em></div>';
+    return `<div>${entries
+      .map(
+        ([k, v]) =>
+          `<strong>${escapeHtml(String(k))}:</strong> ${escapeHtml(String(v))}`
+      )
+      .join('<br/>')}</div>`;
+  }, []);
+
+  // Convenience: show properties popup at location via marker
+  const showPropsPopupAt = useCallback(
+    (latlng: L.LatLngExpression, props: Record<string, unknown>) => {
+      const html = buildPropsPopupHtml(props);
+      addMarkerWithPopup(latlng, html);
+    },
+    [buildPropsPopupHtml, addMarkerWithPopup]
+  );
+
   // Функция для отрисовки выделенной области по координатам
   const drawHighlightArea = useCallback((coordinates: Array<{lng: number, lat: number}>) => {
     if (!highlightGroupRef.current || !mapRef.current) return;
@@ -139,7 +160,7 @@ const Map: React.FC<MapProps> = ({
   }, [clearHighlight, highlightOptions]);
 
   // Функция для извлечения координат из ответа сервера
-  const extractCoordinatesFromFields = useCallback((fields: Array<{userName: string, value: string}>) => {
+  const extractCoordinatesFromFields = useCallback((fields: ZWSField[]) => {
     // Ищем поле с координатами
     const coordValue = findCoordinatesField(fields);
     
@@ -199,19 +220,10 @@ const Map: React.FC<MapProps> = ({
 
         if (fields === null) {
           // try WFS fallback (small bbox)
-          const wfsGeo = await loadWfsAtPoint(e.latlng.lat, e.latlng.lng);
-          console.log({ wfsGeo });
+        const wfsGeo = await loadWfsAtPoint(e.latlng.lat, e.latlng.lng);
           if (wfsGeo && wfsGeo.features && wfsGeo.features.length > 0) {
             const props = wfsGeo.features[0].properties ?? {};
-            const html = `<div>${Object.entries(props)
-              .map(
-                ([k, v]) =>
-                  `<strong>${escapeHtml(String(k))}:</strong> ${escapeHtml(
-                    String(v)
-                  )}`
-              )
-              .join('<br/>')}</div>`;
-            addMarkerWithPopup(e.latlng, html);
+            showPropsPopupAt(e.latlng, props);
             return;
           }
 
@@ -254,15 +266,7 @@ const Map: React.FC<MapProps> = ({
           const wfsGeo = await loadWfsAtPoint(e.latlng.lat, e.latlng.lng);
           if (wfsGeo && wfsGeo.features && wfsGeo.features.length > 0) {
             const props = wfsGeo.features[0].properties ?? {};
-            const html = `<div>${Object.entries(props)
-              .map(
-                ([k, v]) =>
-                  `<strong>${escapeHtml(String(k))}:</strong> ${escapeHtml(
-                    String(v)
-                  )}`
-              )
-              .join('<br/>')}</div>`;
-            addMarkerWithPopup(e.latlng, html);
+            showPropsPopupAt(e.latlng, props);
             return;
           }
         } catch (wfserr) {
@@ -356,15 +360,8 @@ const Map: React.FC<MapProps> = ({
       // create empty geojson layer (will be populated)
       const geoJsonLayer = L.geoJSON(null, {
         onEachFeature: (feature, layer) => {
-          const props = (feature.properties || {}) as Record<string, any>;
-          const html = `<div>${Object.entries(props)
-            .map(
-              ([k, v]) =>
-                `<strong>${escapeHtml(String(k))}:</strong> ${escapeHtml(
-                  String(v)
-                )}`
-            )
-            .join('<br/>')}</div>`;
+          const props = (feature.properties || {}) as Record<string, unknown>;
+          const html = buildPropsPopupHtml(props);
           layer.bindPopup(html, WINDOW_POPUP);
         },
         style: () => ({
@@ -376,6 +373,11 @@ const Map: React.FC<MapProps> = ({
       });
       wfsLayerRef.current = geoJsonLayer;
       overlays['WFS (GeoJSON)'] = geoJsonLayer;
+
+    // 4) Highlight overlay (toggleable)
+    if (highlightGroupRef.current) {
+      overlays['Highlight'] = highlightGroupRef.current;
+    }
 
       // optional: load features in current map bounds to keep payload small
       (async () => {
